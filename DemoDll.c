@@ -28,9 +28,10 @@ char *asprintf(char *fmt, ...)
 char *filename(char *path, BOOL woext)
 {
 	char *r=path, *aux;
-	if(!r) return r;
-	if((aux=strrchr(r, '\\'))) r=aux+1;
-	if(woext) if((aux=strrchr(r, '.'))) *aux=0;
+	if(r) {
+		if((aux=strrchr(r, '\\'))) r=aux+1;
+		if(woext) if((aux=strrchr(r, '.'))) *aux=0;
+	}
 	return r;
 }
 
@@ -40,7 +41,7 @@ char *ToExe(char *path)
 DWORD ServiceMessageBox(HANDLE hServer, LPSTR lpText, LPSTR lpCaption, UINT uType)
 {
 	DWORD r=0;
-	WTSSendMessage(hServer, WTSGetActiveConsoleSessionId(), lpCaption, lpCaption?strlen(lpCaption):0, lpText, lpText?strlen(lpText):0, uType, 0, &r, TRUE);
+	WTSSendMessage(hServer, WTSGetActiveConsoleSessionId(), lpCaption, lpCaption?strlen(lpCaption):0, lpText, lpText?strlen(lpText):0, uType, 0, &r, FALSE);
 	return r;
 }
 
@@ -87,7 +88,7 @@ DWORD GetProcessIDByName(char *name)
 
 DWORD WaitForProcess(char *name, DWORD timeout)
 {
-	DWORD r=0;
+	DWORD r;
 	timeout+=GetTickCount();
 	while(!(r=GetProcessIDByName(name))&&timeout>GetTickCount()) Sleep(500);
 	return r;
@@ -100,8 +101,9 @@ HANDLE FindThatHandle(DWORD dwProcessId, DWORD dwDesiredAccess)
 	PSYSTEM_HANDLE_INFORMATION pHandleInfo;
 	NTSTATUS status;
 
-	FARPROC pfnNtQuerySystemInformation=GetProcAddress(GetModuleHandle("NTDLL"), "NtQuerySystemInformation");
-	if(!pfnNtQuerySystemInformation) return r;
+	static FARPROC pfnNtQuerySystemInformation=NULL;
+	if(!pfnNtQuerySystemInformation)
+		if(!(pfnNtQuerySystemInformation=GetProcAddress(GetModuleHandle("NTDLL"), "NtQuerySystemInformation"))) return r;
 
 	if((pHandleInfo=(PSYSTEM_HANDLE_INFORMATION)malloc(dwSize))) {
 		while((status=(NTSTATUS)pfnNtQuerySystemInformation(16, pHandleInfo, dwSize, &dwSize))==0xC0000004) pHandleInfo=(PSYSTEM_HANDLE_INFORMATION)realloc(pHandleInfo, dwSize*=2);
@@ -115,14 +117,15 @@ HANDLE FindThatHandle(DWORD dwProcessId, DWORD dwDesiredAccess)
 	return r;
 }
 
-HANDLE CreateInterSectionThread(HANDLE hProc, LPVOID lpStartAddress, LPVOID lpParameter)
+HANDLE CreateUserThread(HANDLE hProc, LPVOID lpStartAddress, LPVOID lpParameter)
 {
 	HANDLE r=NULL;
 
-	FARPROC pfnNtCreateThreadEx=GetProcAddress(GetModuleHandle("NTDLL"), "NtCreateThreadEx");
-	if(!pfnNtCreateThreadEx) return r;
+	static FARPROC pfnRtlCreateUserThread=NULL;
+	if(!pfnRtlCreateUserThread)
+		if(!(pfnRtlCreateUserThread=GetProcAddress(GetModuleHandle("NTDLL"), "RtlCreateUserThread"))) return r;
 
-	if(lpStartAddress) pfnNtCreateThreadEx(&r, 0x1FFFFF, NULL, hProc, lpStartAddress, lpParameter, FALSE, NULL, NULL, NULL, NULL);
+	if(lpStartAddress) pfnRtlCreateUserThread(hProc, NULL, FALSE, 0, NULL, NULL, lpStartAddress, lpParameter, &r, NULL);
 
 	return r;
 }
@@ -176,7 +179,7 @@ void LazyManualMapping(HANDLE hProc, HANDLE hMod, LPTHREAD_START_ROUTINE lpFunct
 		RebaseReloc((PIMAGE_BASE_RELOCATION)(dwBase+RelVA), RelSize, dwCopyBase, dwDelta);
 		WriteProcessMemory(hProc, (LPVOID)dwNewBase, (LPVOID)dwCopyBase, dwSize, NULL);
 		if((pfnAdjustGlobals?(BOOL)pfnAdjustGlobals(hProc, dwDelta):TRUE))
-			if(lpFunction) CloseHandle(CreateInterSectionThread(hProc, lpFunction+dwDelta, NULL));
+			if(lpFunction) CloseHandle(CreateUserThread(hProc, lpFunction+dwDelta, NULL));
 	}
 	free((LPVOID)dwCopyBase);
 }

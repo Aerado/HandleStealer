@@ -18,15 +18,28 @@ BOOL SameArch(HANDLE hProc)
 	return r;
 }
 
+HANDLE CreateUserThread(HANDLE hProc, LPVOID lpStartAddress, LPVOID lpParameter)
+{
+	HANDLE r=NULL;
+
+	static FARPROC pfnRtlCreateUserThread=NULL;
+	if(!pfnRtlCreateUserThread)
+		if(!(pfnRtlCreateUserThread=GetProcAddress(GetModuleHandle("NTDLL"), "RtlCreateUserThread"))) return r;
+
+	if(lpStartAddress) pfnRtlCreateUserThread(hProc, NULL, FALSE, 0, NULL, NULL, lpStartAddress, lpParameter, &r, NULL);
+
+	return r;
+}
+
 DWORD GetRemoteProcessId(HANDLE hProc, HANDLE Handle)
 {
 	DWORD r=0;
 
-	HANDLE hThread=CreateRemoteThread(hProc, NULL, 0, (LPTHREAD_START_ROUTINE)GetProcessId, (LPVOID)Handle, 0, NULL);
+	HANDLE hThread=CreateUserThread(hProc, GetProcessId, Handle);
 
 	if(hThread) {
-		WaitForSingleObject(hThread, INFINITE);
-		GetExitCodeThread(hThread, &r);
+		if(!WaitForSingleObject(hThread, 3000))
+			GetExitCodeThread(hThread, &r);
 		CloseHandle(hThread);
 	}
 
@@ -40,8 +53,9 @@ HANDLE FindProcessHandle(DWORD dwProcessId, DWORD dwDesiredAccess, HANDLE *hObje
 	PSYSTEM_HANDLE_INFORMATION pHandleInfo;
 	NTSTATUS status;
 
-	FARPROC pfnNtQuerySystemInformation=GetProcAddress(GetModuleHandle("NTDLL"), "NtQuerySystemInformation");
-	if(!pfnNtQuerySystemInformation) return r;
+	static FARPROC pfnNtQuerySystemInformation=NULL;
+	if(!pfnNtQuerySystemInformation)
+		if(!(pfnNtQuerySystemInformation=GetProcAddress(GetModuleHandle("NTDLL"), "NtQuerySystemInformation"))) return r;
 
 	if((pHandleInfo=(PSYSTEM_HANDLE_INFORMATION)malloc(dwSize))) {
 		while((status=(NTSTATUS)pfnNtQuerySystemInformation(16, pHandleInfo, dwSize, &dwSize))==0xC0000004) pHandleInfo=(PSYSTEM_HANDLE_INFORMATION)realloc(pHandleInfo, dwSize*=2);
@@ -75,7 +89,7 @@ void RemoteLoadLibrary(HANDLE hProcess, char *Lib)
 	if(!hProcess||!Lib||!(sz=strlen(Lib))) return;
 	if(!(rLib=VirtualAllocEx(hProcess, NULL, ++sz, MEM_COMMIT, PAGE_READWRITE))) return;
 	WriteProcessMemory(hProcess, rLib, Lib, sz, NULL);
-	if((hThread=CreateRemoteThread(hProcess, NULL, 0, (LPTHREAD_START_ROUTINE)LoadLibraryA, rLib, 0, NULL))) {
+	if((hThread=CreateUserThread(hProcess, LoadLibraryA, rLib))) {
 		WaitForSingleObject(hThread, INFINITE);
 		CloseHandle(hThread);
 	}
@@ -85,8 +99,10 @@ void RemoteLoadLibrary(HANDLE hProcess, char *Lib)
 BOOL SetDebugPrivilege(BOOL vl)
 {
 	BOOL r=FALSE;
-	FARPROC pfnRtlAdjustPrivilege=GetProcAddress(GetModuleHandle("NTDLL"), "RtlAdjustPrivilege");
-	if(pfnRtlAdjustPrivilege) pfnRtlAdjustPrivilege(20, vl, FALSE, &r);
+	static FARPROC pfnRtlAdjustPrivilege=NULL;
+	if(!pfnRtlAdjustPrivilege)
+		if(!(pfnRtlAdjustPrivilege=GetProcAddress(GetModuleHandle("NTDLL"), "RtlAdjustPrivilege"))) return r;
+	pfnRtlAdjustPrivilege(20, vl, FALSE, &r);
 	return r;
 }
 
